@@ -194,6 +194,8 @@ def initialize_state() -> None:
         "log": [],
         "last_wrong_target": None,
         "last_processed_click": None,
+        "interaction_phase": "awaiting_selection",
+        "map_generation": 0,
     }
 
     for key, value in defaults.items():
@@ -211,6 +213,8 @@ def start_app() -> None:
     st.session_state.log = []
     st.session_state.last_wrong_target = None
     st.session_state.last_processed_click = None
+    st.session_state.interaction_phase = "awaiting_selection"
+    st.session_state.map_generation = 0
 
 
 def reset_app() -> None:
@@ -230,9 +234,15 @@ def find_target(x: int, y: int) -> str | None:
 
 
 def complete_current_step() -> None:
+    # 画像上で現在の対象を改めて選択した場合だけ確認を実行する。
+    # 前の調査のクリックやボタンイベントが残っていても進まないようにする。
+    if st.session_state.interaction_phase != "ready_to_confirm":
+        return
+
     step = STEPS[st.session_state.current_step]
     st.session_state.log.append(step)
     st.session_state.show_result = True
+    st.session_state.interaction_phase = "showing_result"
 
 
 def move_to_next_step() -> None:
@@ -240,6 +250,11 @@ def move_to_next_step() -> None:
     st.session_state.selected_target = None
     st.session_state.last_wrong_target = None
     st.session_state.last_processed_click = None
+    st.session_state.interaction_phase = "awaiting_selection"
+
+    # 画像クリックコンポーネントを新しいインスタンスにし、
+    # 前の調査のクリック値が次へ持ち越されないようにする。
+    st.session_state.map_generation += 1
 
     if st.session_state.current_step == len(STEPS) - 1:
         st.session_state.show_finish = True
@@ -302,6 +317,7 @@ def result_dialog() -> None:
 
     st.button(
         "次へ進む",
+        key=f"next_step_{st.session_state.current_step}",
         type="primary",
         use_container_width=True,
         on_click=move_to_next_step,
@@ -431,17 +447,22 @@ def render_title() -> None:
 # =========================================================
 
 def render_map() -> None:
-    # 画像はページ中央に表示します。
+    # 結果ポップアップを表示中は、背後の画像クリックを処理しない。
+    if st.session_state.interaction_phase == "showing_result":
+        st.image(MAP_IMAGE, width=DISPLAY_WIDTH)
+        return
+
     left_space, image_col, right_space = st.columns([0.04, 0.92, 0.04])
 
     with image_col:
         click = streamlit_image_coordinates(
             MAP_IMAGE,
             width=DISPLAY_WIDTH,
-            # 段階が変わったときだけコンポーネントを作り直します。
-            # 同じ段階での余分な再生成は避けつつ、前段階のクリック値が
-            # 次の段階へ残らないようにしています。
-            key=f"network_map_step_{st.session_state.current_step}",
+            key=(
+                f"network_map_"
+                f"{st.session_state.current_step}_"
+                f"{st.session_state.map_generation}"
+            ),
         )
 
     if not click:
@@ -451,9 +472,10 @@ def render_map() -> None:
         int(click["x"]),
         int(click["y"]),
         st.session_state.current_step,
+        st.session_state.map_generation,
     )
 
-    # Streamlitの再実行時に同じクリックを繰り返し処理しない。
+    # 同じクリックイベントを再実行時に処理し直さない。
     if click_key == st.session_state.last_processed_click:
         return
 
@@ -465,6 +487,9 @@ def render_map() -> None:
     )
 
     if target is None:
+        st.session_state.selected_target = None
+        st.session_state.last_wrong_target = None
+        st.session_state.interaction_phase = "awaiting_selection"
         return
 
     st.session_state.selected_target = target
@@ -472,8 +497,10 @@ def render_map() -> None:
 
     if target in current["allowed_targets"]:
         st.session_state.last_wrong_target = None
+        st.session_state.interaction_phase = "ready_to_confirm"
     else:
         st.session_state.last_wrong_target = target
+        st.session_state.interaction_phase = "awaiting_selection"
 
 
 def render_current_investigation() -> None:
@@ -490,10 +517,6 @@ def render_current_investigation() -> None:
         f"調査 {step['number']} / {len(STEPS)}"
     )
 
-    st.info(
-        f"画像内の「{step['target_text']}」をクリックしてください。"
-    )
-
     if selected is None:
         return
 
@@ -503,6 +526,7 @@ def render_current_investigation() -> None:
     if selected in step["allowed_targets"]:
         st.button(
             step["action"],
+            key=f"confirm_step_{st.session_state.current_step}",
             type="primary",
             use_container_width=True,
             on_click=complete_current_step,
@@ -510,8 +534,8 @@ def render_current_investigation() -> None:
 
     else:
         st.warning(
-            "この場所は現在の調査対象ではありません。"
-            "画面上部の案内を確認してください。"
+            "この場所では現在、確認できる項目はありません。"
+            "別の機器やケーブルを調べてください。"
         )
 
 
@@ -586,7 +610,10 @@ def render_main() -> None:
     st.divider()
     render_log()
 
-    if st.session_state.show_result:
+    if (
+        st.session_state.show_result
+        and st.session_state.interaction_phase == "showing_result"
+    ):
         result_dialog()
 
     if st.session_state.show_finish:
