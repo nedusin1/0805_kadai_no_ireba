@@ -298,12 +298,13 @@ def intro_dialog() -> None:
         "どちらをクリックしても選択できます。"
     )
 
-    st.button(
-        "調査を開始する",
-        type="primary",
-        use_container_width=True,
-        on_click=lambda: setattr(st.session_state, "show_intro", False),
-    )
+    if st.button(
+    "調査を開始する",
+    type="primary",
+    use_container_width=True,
+):
+    st.session_state.show_intro = False
+    st.rerun()
 
 
 @st.dialog("確認が終わりました")
