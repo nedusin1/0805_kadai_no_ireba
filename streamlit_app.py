@@ -17,9 +17,10 @@ MAP_IMAGE_B64: Final = """iVBORw0KGgoAAAANSUhEUgAACAAAAAUSCAYAAACdbhFgAAAQAElEQV
 
 # 画像をカラム内に入れず、ページ中央へ単独で表示します。
 # 前回より横幅に余裕を持たせ、右端が見切れにくい構成です。
-DISPLAY_WIDTH: Final = 1050
+DISPLAY_WIDTH: Final = 950
 
 
+@st.cache_resource
 def load_map_image() -> Image.Image:
     raw = base64.b64decode(MAP_IMAGE_B64)
     return Image.open(io.BytesIO(raw)).convert("RGB")
@@ -192,6 +193,7 @@ def initialize_state() -> None:
         "show_finish": False,
         "log": [],
         "last_wrong_target": None,
+        "last_processed_click": None,
     }
 
     for key, value in defaults.items():
@@ -208,12 +210,12 @@ def start_app() -> None:
     st.session_state.show_finish = False
     st.session_state.log = []
     st.session_state.last_wrong_target = None
+    st.session_state.last_processed_click = None
 
 
 def reset_app() -> None:
     for key in list(st.session_state.keys()):
         del st.session_state[key]
-    st.rerun()
 
 
 def find_target(x: int, y: int) -> str | None:
@@ -237,6 +239,7 @@ def move_to_next_step() -> None:
     st.session_state.show_result = False
     st.session_state.selected_target = None
     st.session_state.last_wrong_target = None
+    st.session_state.last_processed_click = None
 
     if st.session_state.current_step == len(STEPS) - 1:
         st.session_state.show_finish = True
@@ -280,13 +283,12 @@ def intro_dialog() -> None:
         "どちらをクリックしても選択できます。"
     )
 
-    if st.button(
+    st.button(
         "調査を開始する",
         type="primary",
         use_container_width=True,
-    ):
-        st.session_state.show_intro = False
-        st.rerun()
+        on_click=lambda: setattr(st.session_state, "show_intro", False),
+    )
 
 
 @st.dialog("確認が終わりました")
@@ -298,13 +300,12 @@ def result_dialog() -> None:
     st.markdown("### この結果から分かること")
     st.info(step["meaning"])
 
-    if st.button(
+    st.button(
         "次へ進む",
         type="primary",
         use_container_width=True,
-    ):
-        move_to_next_step()
-        st.rerun()
+        on_click=move_to_next_step,
+    )
 
 
 @st.dialog("調査終了")
@@ -336,11 +337,11 @@ def finish_dialog() -> None:
         "切り分けができたことが、今回の調査の成果です。"
     )
 
-    if st.button(
+    st.button(
         "タイトルへ戻る",
         use_container_width=True,
-    ):
-        reset_app()
+        on_click=reset_app,
+    )
 
 
 # =========================================================
@@ -417,13 +418,12 @@ def render_title() -> None:
     _, center, _ = st.columns([1, 1.2, 1])
 
     with center:
-        if st.button(
+        st.button(
             "画面をクリックしてスタート",
             type="primary",
             use_container_width=True,
-        ):
-            start_app()
-            st.rerun()
+            on_click=start_app,
+        )
 
 
 # =========================================================
@@ -431,34 +431,49 @@ def render_title() -> None:
 # =========================================================
 
 def render_map() -> None:
-    # 画像をサイドカラムへ入れず、ページ中央へ単独表示します。
-    # これにより右端が切れにくくなります。
+    # 画像はページ中央に表示します。
     left_space, image_col, right_space = st.columns([0.04, 0.92, 0.04])
 
     with image_col:
         click = streamlit_image_coordinates(
             MAP_IMAGE,
             width=DISPLAY_WIDTH,
+            # 段階が変わったときだけコンポーネントを作り直します。
+            # 同じ段階での余分な再生成は避けつつ、前段階のクリック値が
+            # 次の段階へ残らないようにしています。
             key=f"network_map_step_{st.session_state.current_step}",
         )
 
-    if click:
-        target = find_target(
-            int(click["x"]),
-            int(click["y"]),
-        )
+    if not click:
+        return
 
-        if target is not None:
-            st.session_state.selected_target = target
+    click_key = (
+        int(click["x"]),
+        int(click["y"]),
+        st.session_state.current_step,
+    )
 
-            current = STEPS[st.session_state.current_step]
+    # Streamlitの再実行時に同じクリックを繰り返し処理しない。
+    if click_key == st.session_state.last_processed_click:
+        return
 
-            if target in current["allowed_targets"]:
-                st.session_state.last_wrong_target = None
-            else:
-                st.session_state.last_wrong_target = target
+    st.session_state.last_processed_click = click_key
 
-            st.rerun()
+    target = find_target(
+        int(click["x"]),
+        int(click["y"]),
+    )
+
+    if target is None:
+        return
+
+    st.session_state.selected_target = target
+    current = STEPS[st.session_state.current_step]
+
+    if target in current["allowed_targets"]:
+        st.session_state.last_wrong_target = None
+    else:
+        st.session_state.last_wrong_target = target
 
 
 def render_current_investigation() -> None:
@@ -486,13 +501,12 @@ def render_current_investigation() -> None:
     st.write(TARGET_LABELS[selected])
 
     if selected in step["allowed_targets"]:
-        if st.button(
+        st.button(
             step["action"],
             type="primary",
             use_container_width=True,
-        ):
-            complete_current_step()
-            st.rerun()
+            on_click=complete_current_step,
+        )
 
     else:
         st.warning(
@@ -536,6 +550,10 @@ def render_log() -> None:
             st.info(step["meaning"])
 
 
+def open_intro_dialog() -> None:
+    st.session_state.show_intro = True
+
+
 def render_main() -> None:
     st.title(TITLE)
 
@@ -544,9 +562,10 @@ def render_main() -> None:
         "原因の切り分けを体験します。"
     )
 
-    if st.button("状況説明をもう一度見る"):
-        st.session_state.show_intro = True
-        st.rerun()
+    st.button(
+        "状況説明をもう一度見る",
+        on_click=open_intro_dialog,
+    )
 
     # ネットワーク構成図をページ幅いっぱいに表示
     render_map()
