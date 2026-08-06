@@ -299,12 +299,12 @@ def intro_dialog() -> None:
     )
 
     if st.button(
-    "調査を開始する",
-    type="primary",
-    use_container_width=True,
-):
-    st.session_state.show_intro = False
-    st.rerun()
+        "調査を開始する",
+        type="primary",
+        use_container_width=True,
+    ):
+        st.session_state.show_intro = False
+        st.rerun()
 
 
 @st.dialog("確認が終わりました")
@@ -316,13 +316,14 @@ def result_dialog() -> None:
     st.markdown("### この結果から分かること")
     st.info(step["meaning"])
 
-    st.button(
+    if st.button(
         "次へ進む",
         key=f"next_step_{st.session_state.current_step}",
         type="primary",
         use_container_width=True,
-        on_click=move_to_next_step,
-    )
+    ):
+        move_to_next_step()
+        st.rerun()
 
 
 @st.dialog("調査終了")
